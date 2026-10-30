@@ -4,6 +4,9 @@ import UIKit
 /// Opens a partner page through /api/affiliate/click, so the click is recorded and the URL
 /// carries our affiliate ids (added on the server). If the API cannot be reached, the partner URL
 /// still opens with the ids added here, so the booking is not blocked.
+///
+/// When the Klook or Trip.com app is installed and claims the link (universal links), it opens
+/// there, so travellers keep their partner account and saved details; otherwise in a Safari sheet.
 final class PartnerLauncher {
     private let api: GoTravelNhaAPI
 
@@ -31,7 +34,16 @@ final class PartnerLauncher {
         } else {
             return
         }
-        openInBrowser(target)
+        openInPartnerApp(target)
+    }
+}
+
+/// Opens a partner page in its installed app when the app claims the link, else in a Safari sheet.
+@MainActor
+func openInPartnerApp(_ value: String) {
+    guard let url = URL(string: value) else { return }
+    UIApplication.shared.open(url, options: [.universalLinksOnly: true]) { opened in
+        if !opened { openInBrowser(value) }
     }
 }
 
