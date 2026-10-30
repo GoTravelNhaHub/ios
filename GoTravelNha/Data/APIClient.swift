@@ -150,6 +150,7 @@ final class GoTravelNhaAPI {
         return response.shareId
     }
 
+    func plannerChat(_ body: ChatBody) async throws -> AgentTurn { try await client.send("POST", "/api/planner/chat", body: body) }
     func plan(_ body: PlannerBody) async throws -> PlannerResult { try await client.send("POST", "/api/planner/itinerary", body: body) }
 
     func saveGeneration(_ generationId: String) async throws -> String {

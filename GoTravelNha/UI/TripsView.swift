@@ -16,7 +16,6 @@ struct TripsView: View {
             .padding(16)
 
             if !state.signedIn {
-                SignInPrompt(text: L("trips_sign_in_text"))
                 Spacer()
             } else if tab == 0 {
                 LoadView(load: mine, retry: { Task { await loadMine() } }) { trips in

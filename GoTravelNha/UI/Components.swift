@@ -101,17 +101,6 @@ extension EmptyStateView where Action == EmptyView {
     }
 }
 
-struct SignInPrompt: View {
-    @Environment(AppState.self) private var state
-    let text: String
-
-    var body: some View {
-        EmptyStateView(title: L("signin_required_title"), text: text) {
-            Button(L("action_sign_in")) { state.signIn() }.buttonStyle(.borderedProminent)
-        }
-    }
-}
-
 struct Pill: View {
     let text: String
     var background: Color = Color(.secondarySystemBackground)
@@ -176,15 +165,17 @@ struct CoverImage: View {
     let url: String?
 
     var body: some View {
-        ZStack {
-            Brand.primary.opacity(0.85)
-            if let url, let parsed = URL(string: url) {
-                AsyncImage(url: parsed) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
-            } else {
-                Image(systemName: "mappin.and.ellipse").font(.largeTitle).foregroundStyle(.white.opacity(0.8))
+        // The image is an overlay so the colour sets the size: scaledToFill would otherwise grow past
+        // the frame the caller gives, and the clip would not hold it back
+        Brand.primary.opacity(0.85)
+            .overlay {
+                if let url, let parsed = URL(string: url) {
+                    AsyncImage(url: parsed) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
+                } else {
+                    Image(systemName: "mappin.and.ellipse").font(.largeTitle).foregroundStyle(.white.opacity(0.8))
+                }
             }
-        }
-        .clipped()
+            .clipped()
     }
 }
 

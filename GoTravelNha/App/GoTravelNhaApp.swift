@@ -17,8 +17,7 @@ struct RootView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        @Bindable var state = state
-        TabView(selection: $state.tab) {
+        TabView(selection: Binding(get: { state.tab }, set: select)) {
             NavigationStack { ExploreView() }
                 .tabItem { Label(L("tab_explore"), systemImage: "house") }
                 .tag(AppTab.explore)
@@ -36,10 +35,22 @@ struct RootView: View {
                 .tag(AppTab.profile)
         }
         .task(id: state.signedIn) { await state.refreshUser() }
+        // My Trips needs an account: leave it when the session ends
+        .onChange(of: state.signedIn) { _, signedIn in
+            if !signedIn && state.tab == .trips { state.tab = .explore }
+        }
         .alert(L("signin_failed"), isPresented: Binding(get: { state.authError != nil }, set: { if !$0 { state.authError = nil } })) {
             Button(L("action_ok")) { state.authError = nil }
         } message: {
             Text(state.authError ?? "")
+        }
+    }
+
+    private func select(_ tab: AppTab) {
+        if tab == .trips && !state.signedIn {
+            state.signIn(then: .trips)
+        } else {
+            state.tab = tab
         }
     }
 }

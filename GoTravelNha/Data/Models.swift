@@ -264,6 +264,44 @@ struct PlannerResult: Codable, Hashable {
     var activities: [String: LiveActivity] = [:]
 }
 
+struct ChatBody: Encodable {
+    struct Message: Encodable { var role: String; var text: String }
+    struct Traveller: Encodable { var age: Int }
+    struct Brief: Encodable {
+        var destination: String?
+        var startDate: String?
+        var endDate: String?
+        var travellers: [Traveller]
+        var budget: Double?
+        var pace: String
+        var interests: String?
+    }
+    struct Plan: Encodable { var title: String; var days: [String] }
+    var messages: [Message]
+    var brief: Brief
+    var language: String
+    var plan: Plan?
+}
+
+struct AgentUpdates: Decodable {
+    struct Traveller: Decodable { var age: Int; var label: String? }
+    var destination: String?
+    var startDate: String?
+    var endDate: String?
+    var travellers: [Traveller]?
+    var budget: Double?
+    var pace: String?
+    var interests: String?
+}
+
+struct AgentTurn: Decodable {
+    var reply: String
+    var updates: AgentUpdates
+    var action: String
+    var change: String?
+    var quickReplies: [String]?
+}
+
 struct AuthUser: Codable, Hashable {
     var id: String
     var username: String = ""

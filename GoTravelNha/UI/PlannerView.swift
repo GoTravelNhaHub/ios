@@ -1,40 +1,46 @@
 import SwiftUI
 
-let maxTripDays = 14
-
 struct PlannerView: View {
     @Environment(AppState.self) private var state
-    @State private var destination = ""
-    @State private var start = Calendar.current.date(byAdding: .day, value: 14, to: .now)!
-    @State private var end = Calendar.current.date(byAdding: .day, value: 17, to: .now)!
-    @State private var adults = 2
-    @State private var childAges: [Int] = [6]
-    @State private var newChildAge = 6
-    @State private var pace = "balanced"
-    @State private var budget = ""
-    @State private var interests = ""
-    @State private var adapt: PlannerSeed?
-
-    @State private var working = false
-    @State private var error: String?
-    @State private var result: PlannerResult?
-    @State private var savedTripId: String?
-    @State private var change = ""
-
-    private var days: Int {
-        (Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: start), to: Calendar.current.startOfDay(for: end)).day ?? 0) + 1
-    }
-
-    private var valid: Bool {
-        destination.trimmingCharacters(in: .whitespaces).count >= 2 && (1...maxTripDays).contains(days)
-    }
+    @State private var chat = PlannerChat()
+    @State private var editing = false
+    @State private var confirmStartOver = false
 
     var body: some View {
-        Group {
-            if let result { resultView(result) } else { form }
+        VStack(spacing: 0) {
+            briefStrip
+            if chat.result != nil {
+                Picker("", selection: $chat.showingPlan) {
+                    Text(L("chat_tab_chat")).tag(false)
+                    Text(L("chat_tab_plan")).tag(true)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+            }
+            if let result = chat.result, chat.showingPlan {
+                planView(result)
+            } else {
+                conversation
+            }
         }
         .navigationTitle(L("tab_planner"))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if chat.started {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { confirmStartOver = true } label: { Image(systemName: "arrow.counterclockwise") }
+                        .accessibilityLabel(L("planner_start_over"))
+                        .disabled(chat.busy)
+                }
+            }
+        }
+        .confirmationDialog(L("planner_start_over"), isPresented: $confirmStartOver, titleVisibility: .visible) {
+            Button(L("planner_start_over"), role: .destructive) { chat.startOver() }
+        } message: {
+            Text(L("chat_start_over_confirm"))
+        }
+        .sheet(isPresented: $editing) { PlannerDetailsView(chat: chat) }
         .appRoutes()
         .onAppear(perform: takeSeed)
         .onChange(of: state.plannerSeed) { _, _ in takeSeed() }
@@ -43,125 +49,138 @@ struct PlannerView: View {
     private func takeSeed() {
         guard let seed = state.plannerSeed else { return }
         state.plannerSeed = nil
-        destination = seed.destination
-        if let days = seed.days { end = Calendar.current.date(byAdding: .day, value: min(max(days, 1), maxTripDays) - 1, to: start)! }
-        adapt = seed.adaptFromId != nil ? seed : nil
-        result = nil
-        savedTripId = nil
-        error = nil
+        chat.apply(seed)
     }
 
-    private var form: some View {
-        Form {
-            Section {
-                Text(L("planner_title")).font(.title3.bold())
-                Text(L("planner_subtitle")).foregroundStyle(.secondary)
+    /// The trip so far. The agent fills it in; tapping any part opens the details sheet.
+    private var briefStrip: some View {
+        let brief = chat.brief
+        var dates: String?
+        if let start = brief.startDate, let end = brief.endDate { dates = dateRange(start, end) }
+        let destination = brief.destination.nilIfEmpty
+        let travellers = brief.party.isEmpty ? nil : L("travellers", brief.party.count)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ChoiceChip(label: destination ?? L("brief_add_destination"), selected: destination != nil) { editing = true }
+                ChoiceChip(label: dates ?? L("brief_add_dates"), selected: dates != nil) { editing = true }
+                ChoiceChip(label: travellers ?? L("brief_add_travellers"), selected: travellers != nil) { editing = true }
+                ChoiceChip(label: brief.budget.map(budgetLabel) ?? L("brief_add_budget"), selected: brief.budget != nil) { editing = true }
+                ChoiceChip(label: paceLabel(brief.pace), selected: false) { editing = true }
             }
-            if let adapt {
-                Section {
-                    HStack {
-                        Text(L("planner_adapting", adapt.adaptTitle ?? ""))
-                        Spacer()
-                        Button { self.adapt = nil } label: { Image(systemName: "xmark.circle.fill") }
-                            .accessibilityLabel(L("action_clear"))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var conversation: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(chat.notes) { note in
+                        bubble(note, showReplies: note.id == chat.notes.last?.id && !chat.busy)
                     }
+                    if chat.busy { busyBubble }
+                    Color.clear.frame(height: 1).id("bottom")
                 }
+                .padding(16)
             }
-            Section(L("planner_destination")) {
-                TextField(L("planner_destination"), text: $destination)
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: chat.notes.count) { _, _ in scrollToEnd(proxy) }
+            .onChange(of: chat.busy) { _, _ in scrollToEnd(proxy) }
+            .safeAreaInset(edge: .bottom) { composer }
+        }
+    }
+
+    private func scrollToEnd(_ proxy: ScrollViewProxy) {
+        withAnimation { proxy.scrollTo("bottom", anchor: .bottom) }
+    }
+
+    private func bubble(_ note: ChatNote, showReplies: Bool) -> some View {
+        VStack(alignment: note.fromUser ? .trailing : .leading, spacing: 6) {
+            if !note.text.isEmpty {
+                Text(note.text)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(note.fromUser ? Brand.primary : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+                    .foregroundStyle(note.fromUser ? Color.white : Color.primary)
+                    .frame(maxWidth: 310, alignment: note.fromUser ? .trailing : .leading)
+            }
+            ForEach(note.changes, id: \.self) { change in
+                Label(change, systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+            }
+            if note.showsPlan {
+                Button(L("chat_view_plan")) { chat.showingPlan = true }.buttonStyle(.bordered)
+            }
+            if showReplies && !note.replies.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(searchCities.prefix(8), id: \.name) { city in
-                            ChoiceChip(label: city.name, selected: destination == city.name) { destination = city.name }
+                        ForEach(note.replies, id: \.self) { reply in
+                            ChoiceChip(label: reply, selected: false) { chat.send(reply, state: state) }
                         }
                     }
                 }
             }
-            Section {
-                DatePicker(L("planner_start"), selection: $start, in: Date.now..., displayedComponents: .date)
-                    .onChange(of: start) { _, value in if end < value { end = value } }
-                DatePicker(L("planner_end"), selection: $end, in: start..., displayedComponents: .date)
-                if days > maxTripDays {
-                    Text(L("planner_too_long", maxTripDays)).font(.footnote).foregroundStyle(.red)
-                }
-            }
-            Section(L("planner_travellers")) {
-                Stepper("\(L("planner_adults")): \(adults)", value: $adults, in: 1...max(1, 10 - childAges.count))
-                ForEach(Array(childAges.enumerated()), id: \.offset) { index, age in
-                    HStack {
-                        Text(L("planner_child_age", age))
-                        Spacer()
-                        Button(role: .destructive) { childAges.remove(at: index) } label: { Image(systemName: "minus.circle") }
-                    }
-                }
-                HStack {
-                    Picker(L("planner_child_age_label"), selection: $newChildAge) {
-                        ForEach(0...17, id: \.self) { Text("\($0)").tag($0) }
-                    }
-                    Button(L("planner_add_child")) { childAges.append(newChildAge) }
-                        .disabled(adults + childAges.count >= 10)
-                }
-            }
-            Section(L("planner_pace")) {
-                Picker(L("planner_pace"), selection: $pace) {
-                    Text(L("pace_relaxed")).tag("relaxed")
-                    Text(L("pace_balanced")).tag("balanced")
-                    Text(L("pace_packed")).tag("packed")
-                }
-                .pickerStyle(.segmented)
-            }
-            Section {
-                TextField(L("planner_budget"), text: $budget).keyboardType(.decimalPad)
-                TextField(L("planner_interests"), text: $interests, axis: .vertical).lineLimit(2...4)
-            }
-            if let error {
-                Section { Text(error).foregroundStyle(.red) }
-            }
-            Section {
-                Button(action: { generate() }) {
-                    HStack {
-                        if working { ProgressView().padding(.trailing, 6) }
-                        Text(L(working ? "planner_working" : "planner_generate")).frame(maxWidth: .infinity)
-                    }
-                }
-                .disabled(!valid || working)
-                if working { Text(L("planner_working_hint")).font(.footnote).foregroundStyle(.secondary) }
-            }
         }
+        .frame(maxWidth: .infinity, alignment: note.fromUser ? .trailing : .leading)
     }
 
-    private func resultView(_ result: PlannerResult) -> some View {
-        let suggestions = daySuggestions(result.itinerary.days, activities: result.activities, destination: destination)
+    private var busyBubble: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text(L(chat.generating ? "planner_working_hint" : "chat_thinking"))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var composer: some View {
+        VStack(spacing: 8) {
+            if chat.result == nil && chat.brief.missing.isEmpty && !chat.busy {
+                Button { chat.plan(state: state) } label: { Text(L("planner_generate")).frame(maxWidth: .infinity) }
+                    .buttonStyle(.borderedProminent)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(L("chat_placeholder"), text: $chat.draft, axis: .vertical)
+                    .lineLimit(1...4)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22))
+                Button { chat.send(chat.draft, state: state) } label: {
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 34))
+                }
+                .accessibilityLabel(L("chat_send"))
+                .disabled(chat.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || chat.busy)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    private func planView(_ result: PlannerResult) -> some View {
+        let suggestions = daySuggestions(result.itinerary.days, activities: result.activities, destination: chat.brief.destination)
         return ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 Text(result.itinerary.title).font(.title2.bold())
                 Text(result.itinerary.summary)
                 Text(L("planner_ai_note")).font(.caption).foregroundStyle(.secondary)
-                if let error { Text(error).foregroundStyle(.red) }
-                if let savedTripId {
+                if let error = chat.error { Text(error).foregroundStyle(.red) }
+                if let savedTripId = chat.savedTripId {
                     NavigationLink(value: Route.myTrip(id: savedTripId)) { Text(L("planner_open_saved")).frame(maxWidth: .infinity) }
                         .buttonStyle(.borderedProminent)
                 } else {
                     Button {
-                        if state.signedIn { save(result) } else { state.signIn() }
+                        if state.signedIn { chat.save(state: state) } else { state.signIn() }
                     } label: {
                         Text(L(state.signedIn ? "planner_save" : "planner_sign_in_to_save")).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(working)
+                    .disabled(chat.working || chat.busy)
                 }
-                TextField(L("planner_change_label"), text: $change, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(working)
-                HStack {
-                    Button(L(working ? "planner_working" : "planner_change")) {
-                        generate(change: change.trimmingCharacters(in: .whitespaces))
-                        change = ""
-                    }
+                Button { chat.showingPlan = false } label: { Text(L("chat_change_plan")).frame(maxWidth: .infinity) }
                     .buttonStyle(.bordered)
-                    .disabled(change.trimmingCharacters(in: .whitespaces).count < 2 || working)
-                    Button(L("planner_start_over")) { self.result = nil }.disabled(working)
-                }
             }
             .padding(16)
             ItineraryList(itinerary: result.itinerary, activities: result.activities, suggestions: suggestions) {
@@ -170,53 +189,5 @@ struct PlannerView: View {
             .padding(.bottom, 24)
         }
         .background(Color(.systemGroupedBackground))
-    }
-
-    private func isoDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
-    }
-
-    private func generate(change: String? = nil) {
-        let previous = result
-        working = true
-        error = nil
-        let revise = change.flatMap { text in previous.map { PlannerBody.Revise(generationId: $0.generationId, change: text) } }
-        let body = PlannerBody(
-            destination: destination.trimmingCharacters(in: .whitespaces),
-            startDate: isoDate(start),
-            endDate: isoDate(end),
-            party: Array(repeating: PartyMember(age: 35), count: adults) + childAges.map { PartyMember(age: $0) },
-            budget: Double(budget).flatMap { $0 > 0 ? $0 : nil },
-            pace: pace,
-            interests: interests.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-            language: appLanguage(),
-            revise: revise,
-            adaptFrom: revise == nil ? adapt?.adaptFromId.map { PlannerBody.AdaptFrom(tripId: $0) } : nil
-        )
-        Task {
-            do {
-                result = try await state.api.plan(body)
-                savedTripId = nil
-            } catch {
-                self.error = (error as? APIError)?.userMessage ?? L("planner_failed")
-            }
-            working = false
-        }
-    }
-
-    private func save(_ result: PlannerResult) {
-        working = true
-        Task {
-            do {
-                savedTripId = try await state.api.saveGeneration(result.generationId)
-            } catch {
-                self.error = userMessage(error)
-            }
-            working = false
-        }
     }
 }

@@ -112,8 +112,9 @@ final class AuthManager: NSObject {
                 if let callback { continuation.resume(returning: callback) } else { continuation.resume(throwing: error ?? AuthError.failed("Sign-in did not finish.")) }
             }
             session.presentationContextProvider = self
-            // Share Keycloak's SSO cookie with Safari so "remember me" and Google sign-in work as on the site
-            session.prefersEphemeralWebBrowserSession = false
+            // Private session: iOS skips its "Wants to Use ... to Sign In" alert and opens the page directly.
+            // Safari's cookies are not shared; the offline refresh token keeps the user signed in instead.
+            session.prefersEphemeralWebBrowserSession = true
             self.session = session
             session.start()
         }

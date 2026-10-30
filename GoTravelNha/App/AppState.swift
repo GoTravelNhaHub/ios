@@ -42,10 +42,14 @@ final class AppState {
         user = signedIn ? try? await api.me() : nil
     }
 
-    func signIn(register: Bool = false) {
+    /// Opens Keycloak directly; `then` is the tab to show once sign-in succeeds.
+    func signIn(register: Bool = false, then destination: AppTab? = nil) {
         Task {
             do {
-                if try await auth.signIn(register: register) { await refreshUser() }
+                if try await auth.signIn(register: register) {
+                    await refreshUser()
+                    if let destination { tab = destination }
+                }
             } catch {
                 authError = error.localizedDescription.isEmpty ? L("signin_unavailable") : error.localizedDescription
             }
